@@ -1,0 +1,9 @@
+# place in .bash_aliases file within home directory of bash shell. Once done input source .bashrc to use. 
+alias unfor="sudo nano /etc/unbound/unbound.conf.d/forward.conf"
+alias unedit="sudo nano /etc/unbound/unbound.conf.d/server.conf"
+alias unreload="sudo systemctl reload unbound"
+alias uncheck="sudo unbound-checkconf"
+alias uncat="sudo cat /etc/unbound/unbound.conf.d/server.conf"
+alias unforcat="sudo cat /etc/unbound/unbound.conf.d/forward.conf"
+alias unrestart="sudo systemctl restart unbound"
+alias unstat="sudo journalctl -xeu unbound -f"
