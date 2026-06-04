@@ -1,0 +1,118 @@
+# Troubleshooting DNS over TLS (DoT) SSL/TLS Errors in Unbound
+
+When you configure Unbound to serve DNS over TLS (DoT) using a Let's Encrypt certificate, you will often see SSL handshake failures or "Permission denied" errors on the first start (or after a reload).  
+
+These errors are almost always caused by one of two things:
+
+1. The `unbound` user cannot read the certificate/private key files because of restrictive permissions on the Let's Encrypt directories.
+2. **AppArmor** (common on Debian, Ubuntu, and derivatives) is blocking access even when filesystem permissions look correct.
+
+This playbook walks through diagnosis and the recommended fixes in order of preference.
+
+## 1. Diagnose the Error
+
+Check the Unbound logs:
+
+```bash
+sudo journalctl -u unbound -n 100 --no-pager
+# Live tail
+sudo journalctl -u unbound -f
+Common error patterns:
+
+Permission denied when loading tls-service-key or tls-service-pem
+ssl handshake failed
+error: unable to load certificate chain file
+AppArmor denial messages in syslog or dmesg
+
+Also check for AppArmor denials:
+Bashsudo dmesg | grep -i apparmor | tail -20
+sudo grep -E 'unbound.*denied|apparmor' /var/log/syslog | tail -20
+2. Check Filesystem Permissions
+Let's Encrypt stores certificates in restrictive locations:
+Bashls -la /etc/letsencrypt/live/yourdomain.example.com/
+ls -la /etc/letsencrypt/archive/yourdomain.example.com/
+These directories are normally owned by root with very tight permissions. The unbound user (or the process before it drops privileges) cannot read privkey.pem or fullchain.pem.
+3. Recommended Fix: Extend the AppArmor Profile (Best Long-Term Solution)
+On Debian/Ubuntu-based systems the default AppArmor profile for Unbound only allows access to /etc/unbound/** and a few other paths. It explicitly blocks /etc/letsencrypt/.
+Steps
+
+Create a local override (this file is preserved across package updates):Bashsudo mkdir -p /etc/apparmor.d/local
+
+sudo tee /etc/apparmor.d/local/usr.sbin.unbound > /dev/null << 'EOF'
+# Allow Unbound to read Let's Encrypt certificates for DoT / DoH
+/etc/letsencrypt/archive/** r,
+/etc/letsencrypt/live/** r,
+EOF
+Reload the profile:Bashsudo apparmor_parser --replace /etc/apparmor.d/usr.sbin.unboundAlternative (interactive):
+If you have recent denials in the logs, run:Bashsudo aa-logprofand follow the prompts to allow the observed accesses for Unbound.
+Verify and restart:Bashsudo aa-status | grep -E 'unbound|letsencrypt'
+sudo systemctl restart unbound
+
+Advantages of this method:
+
+No changes to certificate ownership or permissions.
+Certbot renewals continue to work with zero extra configuration.
+Least privilege (only read access is granted via mandatory access control).
+
+4. Alternative: Copy Certificates into /etc/unbound/ (Quick & Simple)
+If you prefer to avoid editing AppArmor (or are on a non-AppArmor system), copy the certificates into Unbound’s own directory, which is already permitted by the default profile.
+Bashsudo mkdir -p /etc/unbound/certs
+
+sudo cp /etc/letsencrypt/live/yourdomain.example.com/fullchain.pem /etc/unbound/certs/
+sudo cp /etc/letsencrypt/live/yourdomain.example.com/privkey.pem /etc/unbound/certs/
+
+sudo chown -R unbound:unbound /etc/unbound/certs
+sudo chmod 640 /etc/unbound/certs/*.pem
+Then update your Unbound config to point at these paths (see section 6).
+For certificate renewals, create a deploy hook so the copies are updated automatically:
+Bashsudo tee /etc/letsencrypt/renewal-hooks/deploy/unbound-cert-copy.sh > /dev/null << 'EOF'
+#!/bin/bash
+cp /etc/letsencrypt/live/yourdomain.example.com/fullchain.pem /etc/unbound/certs/
+cp /etc/letsencrypt/live/yourdomain.example.com/privkey.pem /etc/unbound/certs/
+chown unbound:unbound /etc/unbound/certs/*.pem
+chmod 640 /etc/unbound/certs/*.pem
+systemctl reload unbound
+EOF
+
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/unbound-cert-copy.sh
+5. (Avoid if Possible) Loosen Permissions on Let's Encrypt Directories
+Only use this method if the previous two are not viable. It carries higher risk because it makes the private key readable by more processes.
+Example:
+Bashsudo chgrp -R unbound /etc/letsencrypt/live/yourdomain.example.com \
+                      /etc/letsencrypt/archive/yourdomain.example.com
+
+sudo chmod -R g+rx /etc/letsencrypt/live/yourdomain.example.com \
+                   /etc/letsencrypt/archive/yourdomain.example.com
+
+sudo chmod g+r /etc/letsencrypt/archive/yourdomain.example.com/*.pem
+Then restart Unbound and monitor closely.
+Security warning: This approach is less safe than the AppArmor or copy methods. Revert it once you have a better solution in place.
+6. Unbound DoT Configuration Example
+unboundserver:
+    # ... your existing settings ...
+
+    # DoT listener
+    interface: 0.0.0.0@853
+    interface: ::0@853
+    tls-port: 853
+
+    # Certificate for serving DoT (use fullchain.pem)
+    tls-service-key: "/etc/unbound/certs/privkey.pem"     # or /etc/letsencrypt/... path
+    tls-service-pem:  "/etc/unbound/certs/fullchain.pem"
+
+    # Optional hardening
+    tls-use-sni: yes
+Validate and apply:
+Bashsudo unbound-checkconf /etc/unbound/unbound.conf
+sudo systemctl restart unbound
+Test:
+Bashkdig @your-server-ip -p 853 +tls yourdomain.example.com
+# or
+openssl s_client -connect your-server-ip:853 -servername yourdomain.example.com
+7. Additional Tips
+
+Certbot dry-run test after any changes: sudo certbot renew --dry-run
+SELinux systems (RHEL/Rocky/Alma/Fedora): Use audit2allow, semanage fcontext, and restorecon instead of AppArmor steps.
+Temporary verbosity: Add verbosity: 2 (or 3) under server: while troubleshooting, then reduce it.
+Firewall: Allow TCP/853 if you intend to expose DoT externally (or restrict to trusted networks/VPN).
+Monitoring: Watch logs around renewal time (certs are valid for 90 days).
