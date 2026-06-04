@@ -1,0 +1,84 @@
+server:
+        # Interfaces and access
+        interface:                      0.0.0.0@53
+        interface:                      ::0@53
+        interface:                      0.0.0.0@853
+        interface:                      ::0@853
+        tls-port: 853 
+        do-ip4:                         yes
+        do-ip6:                         yes
+        do-tcp:                         yes
+        do-udp:                         yes
+
+        access-control:                 0.0.0.0/0             allow
+        access-control:                 ::/0                  allow
+
+        num-threads:                    4
+        outgoing-num-tcp:               20
+        incoming-num-tcp:               20
+        outgoing-range:                 4096
+
+        # Cache optimizations (larger for reduced recursion load)
+        msg-cache-size:                 100m
+        msg-cache-slabs:                4        # Power of 2 near num-threads
+        rrset-cache-size:               200m
+        rrset-cache-slabs:              4
+        infra-cache-slabs:              4
+        key-cache-size:                 20m
+        key-cache-slabs:                4
+        neg-cache-size:                 10m
+        num-queries-per-thread:         4096
+
+        # Hardening and security
+        harden-glue:                    yes
+        harden-dnssec-stripped:         yes
+        harden-below-nxdomain:          yes
+        qname-minimisation:             yes
+        aggressive-nsec:                yes
+        val-clean-additional:           yes
+        use-caps-for-id:                no       # Optional: enable for extra anti-spoofing
+        hide-identity:                  yes
+        hide-version:                   yes
+
+        # Resilience and stale data serving (per RFC 8767)
+        serve-expired:                  yes
+        serve-expired-ttl:              86400
+        serve-expired-reply-ttl:        30
+        serve-expired-client-timeout:   1800
+
+        # Efficiency tweaks
+        prefetch:                       yes
+        minimal-responses:              yes
+        rrset-roundrobin:               yes
+        cache-max-ttl:                  86400
+        cache-min-ttl:                  300      # Avoid very short TTLs if desired
+        infra-host-ttl:                 900
+        infra-cache-numhosts:           10000
+
+        # Rate limiting to prevent abuse
+        ratelimit:                      2000
+        ratelimit-size:                 4m
+        ratelimit-slabs:                4
+        ip-ratelimit:                   100
+        ip-ratelimit-size:              1m
+        ip-ratelimit-slabs:             4
+
+        # Recursion limits to prevent loops/excessive load
+        max-sent-count:                 32
+        max-query-restarts:             11
+
+        # Logging (adjust verbosity as needed)
+        verbosity:                      1
+        log-queries:                    no    # Enable for debugging
+        log-replies:                    no
+        
+        tls-service-key: "/etc/letsencrypt/live/example.com/privkey.pem"
+        tls-service-pem: "/etc/letsencrypt/live/example.com/fullchain.pem"
+        # Broader and more compatible settings
+        tls-ciphers: "HIGH:!aNULL:!MD5:!RC4"
+        tls-ciphersuites: "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
+        # Explicitly allow common curves
+#       tls-prefer-server-ciphers: yes 
+
+        ratelimit: 0
+        ip-ratelimit: 0
